@@ -3,3 +3,4 @@ supabase
 sentence-transformers
 numpy
 pandas
+openai
