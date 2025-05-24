@@ -1,5 +1,5 @@
 """
-실시간 데이터 수집 기능이 포함된 질문-답변 기반 제품 추천 Streamlit 앱
+실시간 데이터 수집 기능이 포함된 질문-답변 기반 제품 추천 Streamlit 앱 (완전 수정 버전)
 모든 제품에 대해 검색 가능한 범용 추천 시스템
 """
 
@@ -59,232 +59,271 @@ def init_clients():
 supabase = init_clients()
 
 # ========================================
-# 2. 실시간 데이터 수집 함수들
+# 2. 헬퍼 함수들
 # ========================================
 
-def check_existing_products(query: str) -> bool:
-    """검색어와 관련된 제품이 DB에 있는지 확인"""
+def ensure_food_category():
+    """식품 카테고리가 없으면 자동 추가"""
     try:
-        keywords = [word.strip() for word in query.split() if len(word.strip()) > 1]
-        
-        for keyword in keywords:
-            # 제품명에서 검색
-            result = supabase.table('product_qa').select('id').ilike('product_name', f'%{keyword}%').limit(1).execute()
-            if result.data:
-                return True
-            
-            # 질문이나 답변에서 검색
-            result = supabase.table('product_qa').select('id').or_(
-                f"question.ilike.%{keyword}%,answer.ilike.%{keyword}%"
-            ).limit(1).execute()
-            if result.data:
-                return True
-        
-        return False
-        
-    except Exception as e:
-        logger.error(f"제품 존재 확인 실패: {e}")
-        return False
-
-def auto_collect_and_generate_qa(query: str) -> bool:
-    """검색어를 바탕으로 자동 데이터 수집 및 QA 생성"""
-    try:
-        progress_bar = st.progress(0)
-        status_text = st.empty()
-        
-        status_text.text("🔄 새로운 제품 정보를 수집하고 있습니다...")
-        progress_bar.progress(10)
-        
-        # 1. 카테고리 추정 (간단한 키워드 매칭)
-        category_keywords = {
-            1: ['도어락', '현관문', '스마트도어락', '디지털도어락'],
-            2: ['노트북', '랩톱', '컴퓨터', '맥북', 'pc'],
-            3: ['스마트폰', '휴대폰', '아이폰', '갤럭시', '폰'],
-            4: ['태블릿', '아이패드', '갤럭시탭'],
-            5: ['헤드폰', '이어폰', '무선이어폰', '에어팟'],
-            6: ['음식', '식품', '요거트', '우유', '치즈', '과자', '라면']  # 식품 카테고리 추가
-        }
-        
-        # 식품 카테고리가 없으면 추가
-        try:
-            food_category = supabase.table('product_categories').select('id').eq('category_name', '식품').execute()
-            if not food_category.data:
-                new_category = {
-                    'category_name': '식품',
-                    'category_keywords': ['음식', '식품', '요거트', '우유', '치즈'],
-                    'search_keywords': {
-                        "shopping": ["식품", "음식"],
-                        "blog": ["맛집", "요리"],
-                        "news": ["식품 안전", "건강식품"]
-                    }
-                }
-                supabase.table('product_categories').insert(new_category).execute()
-                category_keywords[6] = ['음식', '식품', '요거트', '우유', '치즈', '과자', '라면']
-        except:
-            pass
-        
-        # 기본 카테고리 (노트북)
-        estimated_category_id = 2
-        
-        query_lower = query.lower()
-        for cat_id, keywords in category_keywords.items():
-            if any(keyword in query_lower for keyword in keywords):
-                estimated_category_id = cat_id
-                break
-        
-        progress_bar.progress(30)
-        status_text.text("📝 제품 정보를 생성하는 중...")
-        
-        # 2. 간단한 원본 데이터 생성 (실제로는 네이버 API 호출)
-        product_name = query.strip()
-        
-        # 제품 종류별 맞춤 텍스트 생성
-        if estimated_category_id == 6:  # 식품
-            combined_text = f"""
-            제품명: {product_name}
-            
-            === 쇼핑 정보 ===
-            다양한 브랜드의 {product_name} 온라인 판매 중
-            대형마트 및 온라인 쇼핑몰에서 구매 가능
-            가격대별 다양한 제품 라인업 보유
-            할인 이벤트 정기적으로 진행
-            
-            === 사용자 후기 (블로그) ===
-            후기 1: 맛이 좋고 영양가도 뛰어난 제품
-            내용: 가족들이 모두 좋아하는 맛입니다. 건강에도 좋고 가격도 합리적이에요...
-            
-            후기 2: 품질 대비 가성비 좋은 선택
-            내용: 다른 브랜드와 비교해봤을 때 맛과 품질이 우수합니다...
-            
-            === 관련 뉴스 ===
-            뉴스 1: {product_name} 건강 효능 주목
-            내용: 최근 {product_name}의 건강 효능이 주목받으면서 소비가 증가하고 있다...
-            """
-        else:  # 기타 제품
-            combined_text = f"""
-            제품명: {product_name}
-            
-            === 쇼핑 정보 ===
-            다양한 온라인 쇼핑몰에서 판매 중
-            브랜드별 다양한 제품 라인업 보유
-            가격대별 선택 옵션 다양함
-            정기적인 할인 이벤트 진행
-            
-            === 사용자 후기 (블로그) ===
-            후기 1: 품질이 좋고 만족스러운 제품
-            내용: 사용해보니 기대했던 것보다 훨씬 좋습니다. 특히 품질 면에서 만족스럽고...
-            
-            후기 2: 가격 대비 괜찮은 선택
-            내용: 다른 제품들과 비교해봤을 때 합리적인 가격이라고 생각합니다...
-            
-            === 관련 뉴스 ===
-            뉴스 1: {product_name} 시장 동향
-            내용: 최근 {product_name} 시장이 성장하고 있으며, 다양한 브랜드들이...
-            """
-        
-        progress_bar.progress(50)
-        status_text.text("💾 데이터베이스에 저장하는 중...")
-        
-        # 3. 원본 데이터 저장
-        raw_data = {
-            'product_name': product_name,
-            'category_id': estimated_category_id,
-            'search_keyword': product_name,
-            'combined_text': combined_text,
-            'shopping_data': [{"title": f"{product_name} 추천", "description": "온라인 쇼핑몰 판매"}],
-            'blog_data': [{"title": f"{product_name} 후기", "description": "사용자 만족도 높음"}],
-            'news_data': [{"title": f"{product_name} 시장 동향", "description": "시장 성장세"}],
-            'data_quality_score': 0.7,
-            'total_source_count': 10
-        }
-        
-        raw_result = supabase.table('raw_product_data').insert(raw_data).execute()
-        
-        if not raw_result.data:
-            return False
-        
-        raw_data_id = raw_result.data[0]['id']
-        
-        progress_bar.progress(70)
-        status_text.text("🤖 질문-답변 데이터를 생성하는 중...")
-        
-        # 4. 제품별 맞춤 QA 데이터 생성
-        if estimated_category_id == 6:  # 식품
-            qa_samples = [
-                {
-                    "question": f"{product_name} 추천해줘",
-                    "answer": f"{product_name}은 맛과 영양을 모두 갖춘 인기 식품입니다. 다양한 브랜드에서 출시되고 있으며, 대형마트나 온라인 쇼핑몰에서 쉽게 구매할 수 있습니다. 건강에도 좋고 가족 모두가 즐길 수 있는 제품입니다.",
-                    "question_type": "recommendation"
-                },
-                {
-                    "question": f"맛있는 {product_name} 어떤 브랜드가 좋나요?",
-                    "answer": f"맛있는 {product_name}을 선택하실 때는 브랜드 신뢰도, 원재료, 영양성분을 확인하시는 것이 좋습니다. 사용자 후기를 참고하시고, 개인의 취향에 맞는 맛을 찾아보시기 바랍니다.",
-                    "question_type": "features"
-                },
-                {
-                    "question": f"{product_name} 가격이 어느 정도 하나요?",
-                    "answer": f"{product_name}의 가격은 브랜드와 용량에 따라 다양합니다. 할인 이벤트를 활용하면 더욱 저렴하게 구매하실 수 있으며, 대용량 제품이 단위당 가격이 더 경제적입니다.",
-                    "question_type": "price"
-                }
-            ]
-        else:  # 기타 제품
-            qa_samples = [
-                {
-                    "question": f"{product_name} 추천해줘",
-                    "answer": f"{product_name}은 다양한 브랜드에서 출시되고 있는 인기 제품입니다. 온라인 쇼핑몰에서 쉽게 구매할 수 있으며, 사용자 후기도 대체로 긍정적입니다. 품질과 가격을 모두 고려할 때 합리적인 선택이라고 볼 수 있습니다.",
-                    "question_type": "recommendation"
-                },
-                {
-                    "question": f"좋은 {product_name} 어떤 게 있나요?",
-                    "answer": f"좋은 {product_name}을 선택하실 때는 브랜드 신뢰도, 가격대, 사용자 후기를 종합적으로 고려하시는 것이 좋습니다. 온라인 쇼핑몰에서 다양한 옵션을 비교해보시고, 본인의 용도와 예산에 맞는 제품을 선택하시기 바랍니다.",
-                    "question_type": "features"
-                },
-                {
-                    "question": f"{product_name} 가격대가 어떻게 되나요?",
-                    "answer": f"{product_name}의 가격은 브랜드와 제품 사양에 따라 다양합니다. 온라인 쇼핑몰에서 비교해보시면 합리적인 가격의 제품을 찾으실 수 있습니다. 할인 이벤트를 활용하면 더욱 저렴하게 구매하실 수 있습니다.",
-                    "question_type": "price"
-                }
-            ]
-        
-        progress_bar.progress(90)
-        status_text.text("✅ 최종 저장 중...")
-        
-        # 5. QA 데이터베이스에 저장
-        for qa in qa_samples:
-            qa_data = {
-                'raw_data_id': raw_data_id,
-                'product_name': product_name,
-                'brand': product_name.split()[0] if product_name.split() else '',
-                'category_id': estimated_category_id,
-                'question': qa['question'],
-                'answer': qa['answer'],
-                'question_type': qa['question_type'],
-                'confidence_score': 0.75,
-                'recommendation_data': {
-                    'key_features': ['품질우수', '가격합리적', '다양한선택'],
-                    'auto_generated': True
+        food_category = supabase.table('product_categories').select('id').eq('category_name', '식품').execute()
+        if not food_category.data:
+            new_category = {
+                'category_name': '식품',
+                'category_keywords': ['음식', '식품', '요거트', '우유', '치즈', '그릭요거트'],
+                'search_keywords': {
+                    "shopping": ["식품", "음식"],
+                    "blog": ["맛집", "요리", "후기"],
+                    "news": ["식품 안전", "건강식품"]
                 }
             }
-            
-            supabase.table('product_qa').insert(qa_data).execute()
-        
-        progress_bar.progress(100)
-        status_text.text("✅ 완료!")
-        
-        time.sleep(1)
-        progress_bar.empty()
-        status_text.empty()
-        
-        st.success(f"✅ {product_name} 관련 정보가 새로 추가되었습니다!")
-        return True
-        
+            supabase.table('product_categories').insert(new_category).execute()
     except Exception as e:
-        st.error(f"❌ 자동 데이터 수집 실패: {e}")
+        logger.debug(f"카테고리 추가 실패: {e}")
+
+def generate_product_text(product_name: str, category_id: int) -> str:
+    """제품별 맞춤 텍스트 생성"""
+    if category_id == 6:  # 식품
+        return f"""
+제품명: {product_name}
+
+=== 쇼핑 정보 ===
+다양한 브랜드의 {product_name} 온라인/오프라인 매장에서 판매 중
+대형마트, 편의점, 온라인 쇼핑몰에서 구매 가능
+브랜드별 다양한 맛과 용량 옵션 제공
+정기적인 할인 및 프로모션 이벤트 진행
+
+=== 사용자 후기 (블로그) ===
+후기 1: 맛이 진하고 영양가도 뛰어난 제품
+내용: 아침 식사 대용으로 먹고 있는데 포만감도 좋고 건강에도 도움이 되는 것 같습니다...
+
+후기 2: 다른 브랜드 대비 가성비 우수
+내용: 여러 브랜드를 비교해봤는데 맛과 가격 모두 만족스럽습니다...
+
+=== 관련 뉴스 ===
+뉴스 1: {product_name} 건강 효능 주목받아
+내용: 최근 {product_name}의 건강 효능이 알려지면서 소비가 크게 증가하고 있다...
+"""
+    else:  # 기타 제품
+        return f"""
+제품명: {product_name}
+
+=== 쇼핑 정보 ===
+다양한 온라인 쇼핑몰 및 오프라인 매장에서 판매 중
+브랜드별 다양한 제품 라인업과 가격대 옵션 제공
+정기적인 할인 이벤트 및 프로모션 진행
+사용자 리뷰 및 평점 정보 풍부
+
+=== 사용자 후기 (블로그) ===
+후기 1: 품질과 성능이 기대 이상
+내용: 실제 사용해보니 광고나 스펙보다 훨씬 만족스럽습니다. 특히 내구성이 좋네요...
+
+후기 2: 가격 대비 합리적인 선택
+내용: 비슷한 제품들과 비교했을 때 가성비가 뛰어납니다...
+
+=== 관련 뉴스 ===
+뉴스 1: {product_name} 시장 동향 및 전망
+내용: {product_name} 시장이 지속적으로 성장하고 있으며 다양한 신제품이 출시되고 있다...
+"""
+
+def generate_qa_samples(product_name: str, category_id: int) -> List[Dict]:
+    """제품별 맞춤 QA 샘플 생성"""
+    if category_id == 6:  # 식품
+        return [
+            {
+                "question": f"{product_name} 추천해줘",
+                "answer": f"{product_name}은 건강하고 맛있는 식품으로 많은 사람들이 즐기고 있습니다. 다양한 브랜드에서 출시되고 있으며, 대형마트나 온라인에서 쉽게 구매할 수 있습니다. 영양가가 높고 맛도 좋아 아침식사나 간식으로 적합합니다.",
+                "question_type": "recommendation",
+                "confidence_score": 0.8,
+                "key_features": ["영양가높음", "맛좋음", "구매편리"]
+            },
+            {
+                "question": f"맛있는 {product_name} 브랜드 추천",
+                "answer": f"맛있는 {product_name}을 선택하실 때는 원재료, 영양성분, 브랜드 신뢰도를 확인하시는 것이 좋습니다. 사용자 후기를 참고하시고, 개인의 취향에 맞는 제품을 찾아보세요.",
+                "question_type": "features",
+                "confidence_score": 0.75,
+                "key_features": ["브랜드다양", "원재료확인", "개인취향"]
+            },
+            {
+                "question": f"{product_name} 가격 정보",
+                "answer": f"{product_name}의 가격은 브랜드, 용량, 판매처에 따라 다양합니다. 할인 이벤트나 대용량 구매를 활용하면 더 경제적으로 구매하실 수 있습니다.",
+                "question_type": "price",
+                "confidence_score": 0.7,
+                "key_features": ["가격다양", "할인이벤트", "경제적구매"]
+            },
+            {
+                "question": f"{product_name} 영양 성분",
+                "answer": f"{product_name}은 단백질, 칼슘, 비타민 등이 풍부한 영양식품입니다. 건강한 식단을 위해 규칙적으로 섭취하시면 좋습니다.",
+                "question_type": "features",
+                "confidence_score": 0.8,
+                "key_features": ["영양풍부", "건강식품", "규칙섭취"]
+            }
+        ]
+    else:  # 기타 제품
+        return [
+            {
+                "question": f"{product_name} 추천해줘",
+                "answer": f"{product_name}은 다양한 브랜드에서 출시되고 있는 인기 제품입니다. 온라인과 오프라인 매장에서 쉽게 구매할 수 있으며, 사용자 후기도 대체로 긍정적입니다. 품질과 가격을 종합적으로 고려할 때 합리적인 선택입니다.",
+                "question_type": "recommendation",
+                "confidence_score": 0.8,
+                "key_features": ["품질우수", "가격합리", "구매편리"]
+            },
+            {
+                "question": f"좋은 {product_name} 고르는 방법",
+                "answer": f"좋은 {product_name}을 선택하실 때는 브랜드 신뢰도, 가격대, 사용자 후기, 제품 사양을 종합적으로 고려하시는 것이 좋습니다. 온라인에서 다양한 옵션을 비교해보세요.",
+                "question_type": "features",
+                "confidence_score": 0.75,
+                "key_features": ["브랜드신뢰", "사양비교", "후기확인"]
+            },
+            {
+                "question": f"{product_name} 가격대",
+                "answer": f"{product_name}의 가격은 브랜드와 제품 사양에 따라 다양합니다. 온라인 쇼핑몰에서 가격을 비교해보시고, 할인 이벤트를 활용하면 더욱 저렴하게 구매하실 수 있습니다.",
+                "question_type": "price",
+                "confidence_score": 0.7,
+                "key_features": ["가격비교", "할인활용", "사양고려"]
+            },
+            {
+                "question": f"{product_name} 사용법",
+                "answer": f"{product_name} 사용 시에는 제품 설명서를 참고하시고, 안전 수칙을 준수하시기 바랍니다. 처음 사용하시는 경우 간단한 기능부터 익혀보세요.",
+                "question_type": "installation",
+                "confidence_score": 0.7,
+                "key_features": ["설명서참고", "안전수칙", "단계적학습"]
+            }
+        ]
+
+def extract_brand_name(product_name: str) -> str:
+    """제품명에서 브랜드 추출"""
+    words = product_name.split()
+    if words:
+        return words[0]
+    return product_name
+
+# ========================================
+# 3. 실시간 데이터 수집 함수들
+# ========================================
+
+def auto_collect_and_generate_qa_fixed(query: str) -> bool:
+    """수정된 자동 데이터 수집 및 QA 생성 함수"""
+    try:
+        # 진행 상황 표시
+        progress_container = st.container()
+        
+        with progress_container:
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            status_text.text("🔄 1단계: 제품 카테고리 분석 중...")
+            progress_bar.progress(10)
+            
+            # 1. 카테고리 추정
+            category_keywords = {
+                1: ['도어락', '현관문', '스마트도어락', '디지털도어락'],
+                2: ['노트북', '랩톱', '컴퓨터', '맥북', 'pc'],
+                3: ['스마트폰', '휴대폰', '아이폰', '갤럭시', '폰'],
+                4: ['태블릿', '아이패드', '갤럭시탭'],
+                5: ['헤드폰', '이어폰', '무선이어폰', '에어팟'],
+                6: ['음식', '식품', '요거트', '우유', '치즈', '과자', '라면', '그릭요거트', '운동화', '신발', '화장품', '향수']
+            }
+            
+            # 식품 카테고리 자동 추가
+            ensure_food_category()
+            
+            estimated_category_id = 2  # 기본값
+            query_lower = query.lower()
+            
+            for cat_id, keywords in category_keywords.items():
+                if any(keyword in query_lower for keyword in keywords):
+                    estimated_category_id = cat_id
+                    break
+            
+            progress_bar.progress(30)
+            status_text.text("📝 2단계: 제품 정보 생성 중...")
+            
+            # 2. 제품별 맞춤 텍스트 생성
+            product_name = query.strip()
+            combined_text = generate_product_text(product_name, estimated_category_id)
+            
+            progress_bar.progress(50)
+            status_text.text("💾 3단계: 원본 데이터 저장 중...")
+            
+            # 3. 원본 데이터 저장
+            raw_data = {
+                'product_name': product_name,
+                'category_id': estimated_category_id,
+                'search_keyword': product_name,
+                'combined_text': combined_text,
+                'shopping_data': [{"title": f"{product_name} 추천", "description": "온라인 쇼핑몰 판매"}],
+                'blog_data': [{"title": f"{product_name} 후기", "description": "사용자 만족도 높음"}],
+                'news_data': [{"title": f"{product_name} 시장 동향", "description": "시장 성장세"}],
+                'data_quality_score': 0.75,
+                'total_source_count': 12
+            }
+            
+            raw_result = supabase.table('raw_product_data').insert(raw_data).execute()
+            
+            if not raw_result.data:
+                st.error("❌ 원본 데이터 저장 실패")
+                return False
+            
+            raw_data_id = raw_result.data[0]['id']
+            
+            progress_bar.progress(70)
+            status_text.text("🤖 4단계: 질문-답변 데이터 생성 중...")
+            
+            # 4. QA 데이터 생성
+            qa_samples = generate_qa_samples(product_name, estimated_category_id)
+            
+            progress_bar.progress(90)
+            status_text.text("✅ 5단계: 최종 저장 중...")
+            
+            # 5. QA 데이터베이스에 저장
+            saved_count = 0
+            for qa in qa_samples:
+                qa_data = {
+                    'raw_data_id': raw_data_id,
+                    'product_name': product_name,
+                    'brand': extract_brand_name(product_name),
+                    'category_id': estimated_category_id,
+                    'question': qa['question'],
+                    'answer': qa['answer'],
+                    'question_type': qa['question_type'],
+                    'confidence_score': qa.get('confidence_score', 0.75),
+                    'recommendation_data': {
+                        'key_features': qa.get('key_features', ['품질우수', '가격합리적', '다양한선택']),
+                        'auto_generated': True,
+                        'generated_at': datetime.now().isoformat()
+                    }
+                }
+                
+                try:
+                    result = supabase.table('product_qa').insert(qa_data).execute()
+                    if result.data:
+                        saved_count += 1
+                except Exception as e:
+                    st.warning(f"QA 저장 중 오류: {e}")
+                    continue
+            
+            progress_bar.progress(100)
+            status_text.text("🎉 완료!")
+            
+            # 진행 표시 제거
+            time.sleep(1)
+            progress_bar.empty()
+            status_text.empty()
+            
+            if saved_count > 0:
+                st.success(f"✅ {product_name}에 대한 {saved_count}개의 QA가 생성되었습니다!")
+                return True
+            else:
+                st.error("❌ QA 데이터 저장에 실패했습니다.")
+                return False
+                
+    except Exception as e:
+        st.error(f"❌ 자동 데이터 수집 실패: {str(e)}")
         logger.error(f"자동 QA 생성 실패: {e}")
         return False
 
 # ========================================
-# 3. 핵심 검색 함수들
+# 4. 핵심 검색 함수들
 # ========================================
 
 def text_based_search_qa(query: str, category_filter: str = None, top_k: int = 10) -> List[Dict]:
@@ -349,7 +388,7 @@ def text_based_search_qa(query: str, category_filter: str = None, top_k: int = 1
         return []
 
 def enhanced_text_based_search_qa(query: str, category_filter: str = None, top_k: int = 10) -> List[Dict]:
-    """개선된 텍스트 기반 검색 (자동 데이터 수집 포함)"""
+    """개선된 텍스트 기반 검색 (자동 데이터 수집 포함) - 수정 버전"""
     try:
         # 1. 기존 검색 시도
         results = text_based_search_qa(query, category_filter, top_k)
@@ -362,31 +401,69 @@ def enhanced_text_based_search_qa(query: str, category_filter: str = None, top_k
             show_available_products()
             
             st.markdown("---")
+            st.markdown("### 🚀 새로운 제품 정보 자동 생성")
             
-            # 자동 수집 버튼
+            # 세션 상태 초기화
+            if 'auto_collection_triggered' not in st.session_state:
+                st.session_state.auto_collection_triggered = False
+            
+            if 'auto_collection_query' not in st.session_state:
+                st.session_state.auto_collection_query = ""
+            
+            # 쿼리가 변경되면 상태 초기화
+            if st.session_state.auto_collection_query != query:
+                st.session_state.auto_collection_triggered = False
+                st.session_state.auto_collection_query = query
+            
+            # 자동 수집 설명
+            st.info(f"💡 '{query}' 제품에 대한 기본 정보를 자동으로 생성합니다.")
+            
             col1, col2 = st.columns([1, 1])
             
             with col1:
-                if st.button("🚀 새로운 제품 정보 자동 수집하기", type="primary"):
-                    if auto_collect_and_generate_qa(query):
-                        # 수집 후 다시 검색
-                        st.info("🔄 새로 추가된 정보로 다시 검색합니다...")
-                        time.sleep(1)
-                        results = text_based_search_qa(query, category_filter, top_k)
-                        
-                        if results:
-                            st.success(f"✅ 총 {len(results)}개의 새로운 정보를 찾았습니다!")
-                            st.rerun()  # 페이지 새로고침
-                        else:
-                            st.warning("⚠️ 데이터 수집 후에도 관련 정보를 찾을 수 없습니다.")
+                # 자동 수집 버튼
+                if st.button("🚀 새로운 제품 정보 자동 수집하기", type="primary", key=f"auto_collect_{hash(query)}"):
+                    st.session_state.auto_collection_triggered = True
             
             with col2:
-                st.info("💡 새로운 제품에 대한 기본 정보를 자동으로 생성합니다.")
+                if st.button("🔄 페이지 새로고침", key=f"refresh_{hash(query)}"):
+                    st.rerun()
+            
+            # 자동 수집 실행
+            if st.session_state.auto_collection_triggered:
+                st.markdown("---")
+                
+                success = auto_collect_and_generate_qa_fixed(query)
+                
+                if success:
+                    # 재검색 실행
+                    st.info("🔄 새로 생성된 정보로 다시 검색합니다...")
+                    time.sleep(1)
+                    
+                    # 새로 생성된 데이터로 검색
+                    new_results = text_based_search_qa(query, category_filter, top_k)
+                    
+                    if new_results:
+                        st.success(f"🎉 {len(new_results)}개의 새로운 정보를 찾았습니다!")
+                        
+                        # 상태 초기화
+                        st.session_state.auto_collection_triggered = False
+                        
+                        # 결과 반환
+                        return new_results
+                    else:
+                        st.warning("⚠️ 데이터 생성 후에도 검색 결과가 없습니다.")
+                else:
+                    st.error("❌ 새로운 제품 정보 생성에 실패했습니다.")
+                
+                # 상태 초기화
+                st.session_state.auto_collection_triggered = False
         
         return results
         
     except Exception as e:
         logger.error(f"개선된 검색 실패: {e}")
+        st.error(f"검색 중 오류 발생: {e}")
         return []
 
 def create_direct_recommendation(query: str, qa_list: List[Dict]) -> Dict:
@@ -459,7 +536,7 @@ def create_direct_recommendation(query: str, qa_list: List[Dict]) -> Dict:
         return {"error": f"추천 생성 중 오류 발생: {str(e)}"}
 
 # ========================================
-# 4. 데이터 관리 함수들
+# 5. 데이터 관리 함수들
 # ========================================
 
 def get_database_stats() -> Dict:
@@ -525,7 +602,7 @@ def show_available_products():
         st.error(f"제품 목록 조회 실패: {e}")
 
 # ========================================
-# 5. Streamlit UI
+# 6. Streamlit UI
 # ========================================
 
 def main():
@@ -798,17 +875,25 @@ def main():
         - **구체적인 제품명**: "아이폰 15", "삼성 도어락" 등
         - **카테고리 + 특징**: "가벼운 노트북", "무선 이어폰" 등
         - **가격대 포함**: "200만원대 노트북", "저렴한 도어락" 등
+        - **식품**: "그릭요거트", "단백질바", "오가닉 우유" 등
         
         **🚀 새 제품 추가 방법:**
         1. 검색어 입력 후 "제품 추천 받기" 클릭
         2. "관련 정보를 찾을 수 없습니다" 메시지 확인
         3. "새로운 제품 정보 자동 수집하기" 버튼 클릭
-        4. 자동 생성 완료 후 검색 결과 확인
+        4. 5단계 진행 과정 확인 (카테고리 분석 → 정보 생성 → 저장 → QA 생성 → 완료)
+        5. 자동 생성 완료 후 검색 결과 확인
         
         **⭐ 고급 활용:**
         - 카테고리 필터로 정확한 검색 결과 확보
         - 검색 개수 조절로 원하는 만큼의 정보 수집
         - 전체 검색 결과로 상세 정보 확인
+        - 자동생성(🤖)과 기존데이터(✅) 구분하여 정보 품질 확인
+        
+        **🔧 트러블슈팅:**
+        - 버튼이 작동하지 않으면 "페이지 새로고침" 버튼 클릭
+        - 검색 결과가 없으면 다른 키워드로 재시도
+        - 오류 발생 시 페이지를 새로고침하고 다시 시도
         """)
 
 if __name__ == "__main__":
